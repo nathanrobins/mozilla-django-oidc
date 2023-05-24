@@ -44,6 +44,8 @@ class SessionRefresh(MiddlewareMixin):
         self.OIDC_RP_SCOPES = self.get_settings("OIDC_RP_SCOPES", "openid email")
         self.OIDC_USE_NONCE = self.get_settings("OIDC_USE_NONCE", True)
         self.OIDC_NONCE_SIZE = self.get_settings("OIDC_NONCE_SIZE", 32)
+        self.OIDC_OP_CONFIGURATIONS = self.get_settings("OIDC_OP_CONFIGURATIONS", {})
+
 
     @staticmethod
     def get_settings(attr, *args):
@@ -129,8 +131,10 @@ class SessionRefresh(MiddlewareMixin):
 
         LOGGER.debug("id token has expired")
         # The id_token has expired, so we have to re-authenticate silently.
-        auth_url = self.OIDC_OP_AUTHORIZATION_ENDPOINT
-        client_id = self.OIDC_RP_CLIENT_ID
+        REQUEST_BASE = request.build_absolute_uri('/')
+        REQUEST_OIDC_SETTINGS = self.OIDC_OP_CONFIGURATIONS.get(REQUEST_BASE, {})
+        auth_url = REQUEST_OIDC_SETTINGS.get('AUTHORIZATION_ENDPOINT', self.OIDC_OP_AUTHORIZATION_ENDPOINT)
+        client_id = REQUEST_OIDC_SETTINGS.get('CLIENT_ID', self.OIDC_RP_CLIENT_ID)
         state = get_random_string(self.OIDC_STATE_SIZE)
 
         # Build the parameters as if we were doing a real auth handoff, except

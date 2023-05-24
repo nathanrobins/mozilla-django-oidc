@@ -167,15 +167,21 @@ class OIDCAuthenticationRequestView(View):
 
     def __init__(self, *args, **kwargs):
         super(OIDCAuthenticationRequestView, self).__init__(*args, **kwargs)
-
         self.OIDC_OP_AUTH_ENDPOINT = self.get_settings("OIDC_OP_AUTHORIZATION_ENDPOINT")
         self.OIDC_RP_CLIENT_ID = self.get_settings("OIDC_RP_CLIENT_ID")
+        self.OIDC_OP_CONFIGURATIONS = self.get_settings("OIDC_OP_CONFIGURATIONS", {})
+
 
     @staticmethod
     def get_settings(attr, *args):
         return import_from_settings(attr, *args)
 
     def get(self, request):
+        REQUEST_BASE = request.build_absolute_uri('/')
+        print("REQUEST_BASE")
+        print(REQUEST_BASE)
+        REQUEST_OIDC_SETTINGS = self.OIDC_OP_CONFIGURATIONS.get(REQUEST_BASE, {})
+        client_id = REQUEST_OIDC_SETTINGS.get('CLIENT_ID', self.OIDC_RP_CLIENT_ID)
         """OIDC client authentication initialization HTTP endpoint"""
         state = get_random_string(self.get_settings("OIDC_STATE_SIZE", 32))
         redirect_field_name = self.get_settings("OIDC_REDIRECT_FIELD_NAME", "next")
@@ -186,7 +192,7 @@ class OIDCAuthenticationRequestView(View):
         params = {
             "response_type": "code",
             "scope": self.get_settings("OIDC_RP_SCOPES", "openid email"),
-            "client_id": self.OIDC_RP_CLIENT_ID,
+            "client_id": client_id,
             "redirect_uri": absolutify(request, reverse(reverse_url)),
             "state": state,
         }
@@ -231,8 +237,9 @@ class OIDCAuthenticationRequestView(View):
         request.session["oidc_login_next"] = get_next_url(request, redirect_field_name)
 
         query = urlencode(params)
+        REQUEST_OIDC_OP_AUTH_ENDPOINT = REQUEST_OIDC_SETTINGS.get('CLIENT_ID', self.OIDC_OP_AUTH_ENDPOINT)
         redirect_url = "{url}?{query}".format(
-            url=self.OIDC_OP_AUTH_ENDPOINT, query=query
+            url=REQUEST_OIDC_OP_AUTH_ENDPOINT, query=query
         )
         return HttpResponseRedirect(redirect_url)
 

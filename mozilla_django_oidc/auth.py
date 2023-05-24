@@ -51,6 +51,7 @@ class OIDCAuthenticationBackend(ModelBackend):
         self.OIDC_RP_CLIENT_SECRET = self.get_settings("OIDC_RP_CLIENT_SECRET")
         self.OIDC_RP_SIGN_ALGO = self.get_settings("OIDC_RP_SIGN_ALGO", "HS256")
         self.OIDC_RP_IDP_SIGN_KEY = self.get_settings("OIDC_RP_IDP_SIGN_KEY", None)
+        self.OIDC_OP_CONFIGURATIONS = self.get_settings("OIDC_OP_CONFIGURATIONS", {})
 
         if self.OIDC_RP_SIGN_ALGO.startswith("RS") and (
             self.OIDC_RP_IDP_SIGN_KEY is None and self.OIDC_OP_JWKS_ENDPOINT is None
@@ -113,7 +114,7 @@ class OIDCAuthenticationBackend(ModelBackend):
         """Update existing user with new claims, if necessary save, and return user"""
         return user
 
-    def _verify_jws(self, payload, key):
+    def _verify_jws(self, payload, key, request):
         """Verify the given JWS payload with the given key and return the payload"""
         jws = JWS.from_compact(payload)
 
@@ -122,8 +123,10 @@ class OIDCAuthenticationBackend(ModelBackend):
         except KeyError:
             msg = "No alg value found in header"
             raise SuspiciousOperation(msg)
-
-        if alg != self.OIDC_RP_SIGN_ALGO:
+        REQUEST_BASE = request.build_absolute_uri('/')
+        REQUEST_OIDC_SETTINGS = self.OIDC_OP_CONFIGURATIONS.get(REQUEST_BASE, {})
+        REQUEST_OIDC_RP_SIGN_ALGO = REQUEST_OIDC_SETTINGS.get('SIGN_ALGO', self.OIDC_RP_SIGN_ALGO)
+        if alg != REQUEST_OIDC_RP_SIGN_ALGO:
             msg = (
                 "The provider algorithm {!r} does not match the client's "
                 "OIDC_RP_SIGN_ALGO.".format(alg)
@@ -143,10 +146,14 @@ class OIDCAuthenticationBackend(ModelBackend):
 
         return jws.payload
 
-    def retrieve_matching_jwk(self, token):
+    def retrieve_matching_jwk(self, token, request):
         """Get the signing key by exploring the JWKS endpoint of the OP."""
+        REQUEST_BASE = request.build_absolute_uri('/')
+        REQUEST_OIDC_SETTINGS = self.OIDC_OP_CONFIGURATIONS.get(REQUEST_BASE, {})
+        REQUEST_OIDC_OP_JWKS_ENDPOINT = REQUEST_OIDC_SETTINGS.get('OIDC_OP_JWKS_ENDPOINT', self.OIDC_OP_JWKS_ENDPOINT)
+
         response_jwks = requests.get(
-            self.OIDC_OP_JWKS_ENDPOINT,
+            REQUEST_OIDC_OP_JWKS_ENDPOINT,
             verify=self.get_settings("OIDC_VERIFY_SSL", True),
             timeout=self.get_settings("OIDC_TIMEOUT", None),
             proxies=self.get_settings("OIDC_PROXY", None),
@@ -172,7 +179,7 @@ class OIDCAuthenticationBackend(ModelBackend):
             raise SuspiciousOperation("Could not find a valid JWKS.")
         return key
 
-    def get_payload_data(self, token, key):
+    def get_payload_data(self, token, key, request):
         """Helper method to get the payload of the JWT token."""
         if self.get_settings("OIDC_ALLOW_UNSECURED_JWT", False):
             header, payload_data, signature = token.split(b".")
@@ -183,22 +190,27 @@ class OIDCAuthenticationBackend(ModelBackend):
                 return b64decode(payload_data)
 
         # By default fallback to verify JWT signatures
-        return self._verify_jws(token, key)
+        return self._verify_jws(token, key, request)
 
-    def verify_token(self, token, **kwargs):
+    def verify_token(self, token, request, **kwargs):
         """Validate the token signature."""
         nonce = kwargs.get("nonce")
 
         token = force_bytes(token)
-        if self.OIDC_RP_SIGN_ALGO.startswith("RS"):
+        REQUEST_BASE = request.build_absolute_uri('/')
+        REQUEST_OIDC_SETTINGS = self.OIDC_OP_CONFIGURATIONS.get(REQUEST_BASE, {})
+        REQUEST_OIDC_RP_SIGN_ALGO = REQUEST_OIDC_SETTINGS.get('SIGN_ALGO', self.OIDC_RP_SIGN_ALGO)
+        REQUEST_OIDC_RP_IDP_SIGN_KEY = REQUEST_OIDC_SETTINGS.get('IDP_SIGN_KEY', self.OIDC_RP_IDP_SIGN_KEY )
+        REQUEST_OIDC_RP_CLIENT_SECRET = REQUEST_OIDC_SETTINGS.get('CLIENT_SECRET', self.OIDC_RP_CLIENT_SECRET)
+        if REQUEST_OIDC_RP_SIGN_ALGO.startswith("RS"):
             if self.OIDC_RP_IDP_SIGN_KEY is not None:
-                key = self.OIDC_RP_IDP_SIGN_KEY
+                key = REQUEST_OIDC_RP_IDP_SIGN_KEY
             else:
-                key = self.retrieve_matching_jwk(token)
+                key = self.retrieve_matching_jwk(token, request)
         else:
-            key = self.OIDC_RP_CLIENT_SECRET
+            key = REQUEST_OIDC_RP_CLIENT_SECRET
 
-        payload_data = self.get_payload_data(token, key)
+        payload_data = self.get_payload_data(token, key, request)
 
         # The 'token' will always be a byte string since it's
         # the result of base64.urlsafe_b64decode().
@@ -215,7 +227,7 @@ class OIDCAuthenticationBackend(ModelBackend):
             raise SuspiciousOperation(msg)
         return payload
 
-    def get_token(self, payload):
+    def get_token(self, payload, request):
         """Return token object as a dictionary."""
 
         auth = None
@@ -226,9 +238,11 @@ class OIDCAuthenticationBackend(ModelBackend):
 
             auth = HTTPBasicAuth(user, pw)
             del payload["client_secret"]
-
+        REQUEST_BASE = request.build_absolute_uri('/')
+        REQUEST_OIDC_SETTINGS = self.OIDC_OP_CONFIGURATIONS.get(REQUEST_BASE, {})
+        REQUEST_OIDC_OP_TOKEN_ENDPOINT = REQUEST_OIDC_SETTINGS.get('TOKEN_ENDPOINT', self.OIDC_OP_TOKEN_ENDPOINT)
         response = requests.post(
-            self.OIDC_OP_TOKEN_ENDPOINT,
+            REQUEST_OIDC_OP_TOKEN_ENDPOINT,
             data=payload,
             auth=auth,
             verify=self.get_settings("OIDC_VERIFY_SSL", True),
@@ -238,12 +252,14 @@ class OIDCAuthenticationBackend(ModelBackend):
         response.raise_for_status()
         return response.json()
 
-    def get_userinfo(self, access_token, id_token, payload):
+    def get_userinfo(self, access_token, id_token, payload, request):
         """Return user details dictionary. The id_token and payload are not used in
         the default implementation, but may be used when overriding this method"""
-
+        REQUEST_BASE = request.build_absolute_uri('/')
+        REQUEST_OIDC_SETTINGS = self.OIDC_OP_CONFIGURATIONS.get(REQUEST_BASE, {})
+        REQUEST_OIDC_OP_USER_ENDPOINT = REQUEST_OIDC_SETTINGS.get('USER_ENDPOINT', self.OIDC_OP_USER_ENDPOINT)
         user_response = requests.get(
-            self.OIDC_OP_USER_ENDPOINT,
+            REQUEST_OIDC_OP_USER_ENDPOINT,
             headers={"Authorization": "Bearer {0}".format(access_token)},
             verify=self.get_settings("OIDC_VERIFY_SSL", True),
             timeout=self.get_settings("OIDC_TIMEOUT", None),
@@ -270,7 +286,7 @@ class OIDCAuthenticationBackend(ModelBackend):
         reverse_url = self.get_settings(
             "OIDC_AUTHENTICATION_CALLBACK_URL", "oidc_authentication_callback"
         )
-
+        # Replace OIDC_RP_CLIENT_ID and OIDC_RP_CLIENT_SECRET based on request
         token_payload = {
             "client_id": self.OIDC_RP_CLIENT_ID,
             "client_secret": self.OIDC_RP_CLIENT_SECRET,
@@ -284,17 +300,17 @@ class OIDCAuthenticationBackend(ModelBackend):
             token_payload.update({"code_verifier": code_verifier})
 
         # Get the token
-        token_info = self.get_token(token_payload)
+        token_info = self.get_token(token_payload, request)
         id_token = token_info.get("id_token")
         access_token = token_info.get("access_token")
 
         # Validate the token
-        payload = self.verify_token(id_token, nonce=nonce)
+        payload = self.verify_token(id_token, nonce=nonce, request=request)
 
         if payload:
             self.store_tokens(access_token, id_token)
             try:
-                return self.get_or_create_user(access_token, id_token, payload)
+                return self.get_or_create_user(access_token, id_token, payload, request)
             except SuspiciousOperation as exc:
                 LOGGER.warning("failed to get or create user: %s", exc)
                 return None
@@ -311,11 +327,11 @@ class OIDCAuthenticationBackend(ModelBackend):
         if self.get_settings("OIDC_STORE_ID_TOKEN", False):
             session["oidc_id_token"] = id_token
 
-    def get_or_create_user(self, access_token, id_token, payload):
+    def get_or_create_user(self, access_token, id_token, payload, request):
         """Returns a User instance if 1 user is found. Creates a user if not found
         and configured to do so. Returns nothing if multiple users are matched."""
 
-        user_info = self.get_userinfo(access_token, id_token, payload)
+        user_info = self.get_userinfo(access_token, id_token, payload, request)
 
         claims_verified = self.verify_claims(user_info)
         if not claims_verified:
