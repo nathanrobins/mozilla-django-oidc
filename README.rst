@@ -1,3 +1,7 @@
+
+To REBUILD:  python .\setup.py publish
+
+
 ===================
 mozilla-django-oidc
 ===================

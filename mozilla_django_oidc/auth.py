@@ -150,7 +150,7 @@ class OIDCAuthenticationBackend(ModelBackend):
         """Get the signing key by exploring the JWKS endpoint of the OP."""
         REQUEST_BASE = request.build_absolute_uri('/')
         REQUEST_OIDC_SETTINGS = self.OIDC_OP_CONFIGURATIONS.get(REQUEST_BASE, {})
-        REQUEST_OIDC_OP_JWKS_ENDPOINT = REQUEST_OIDC_SETTINGS.get('OIDC_OP_JWKS_ENDPOINT', self.OIDC_OP_JWKS_ENDPOINT)
+        REQUEST_OIDC_OP_JWKS_ENDPOINT = REQUEST_OIDC_SETTINGS.get('JWKS_ENDPOINT', self.OIDC_OP_JWKS_ENDPOINT)
 
         response_jwks = requests.get(
             REQUEST_OIDC_OP_JWKS_ENDPOINT,

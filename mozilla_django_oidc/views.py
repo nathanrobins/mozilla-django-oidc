@@ -178,8 +178,6 @@ class OIDCAuthenticationRequestView(View):
 
     def get(self, request):
         REQUEST_BASE = request.build_absolute_uri('/')
-        print("REQUEST_BASE")
-        print(REQUEST_BASE)
         REQUEST_OIDC_SETTINGS = self.OIDC_OP_CONFIGURATIONS.get(REQUEST_BASE, {})
         client_id = REQUEST_OIDC_SETTINGS.get('CLIENT_ID', self.OIDC_RP_CLIENT_ID)
         """OIDC client authentication initialization HTTP endpoint"""
@@ -237,7 +235,7 @@ class OIDCAuthenticationRequestView(View):
         request.session["oidc_login_next"] = get_next_url(request, redirect_field_name)
 
         query = urlencode(params)
-        REQUEST_OIDC_OP_AUTH_ENDPOINT = REQUEST_OIDC_SETTINGS.get('CLIENT_ID', self.OIDC_OP_AUTH_ENDPOINT)
+        REQUEST_OIDC_OP_AUTH_ENDPOINT = REQUEST_OIDC_SETTINGS.get('AUTHORIZATION_ENDPOINT', self.OIDC_OP_AUTH_ENDPOINT)
         redirect_url = "{url}?{query}".format(
             url=REQUEST_OIDC_OP_AUTH_ENDPOINT, query=query
         )
